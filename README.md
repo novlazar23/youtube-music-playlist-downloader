@@ -9,11 +9,13 @@ A Docker-based tool to download playlists from YouTube Music and convert them to
 ## Features
 
 - Download entire playlists from YouTube Music
-- Convert videos to high-quality MP3 files
-- Preserve metadata (title, artist, album)
-- Embed album artwork
-- Organize downloads by playlist
+- Convert audio to MP3 (FFmpeg)
+- Consistent metadata tagging (Navidrome-friendly)
+- Embed thumbnails as cover artwork
+- Organize downloads by playlist/album
+- Skip duplicates using yt-dlp archive
 - Support for multiple playlists
+- Watchdog mode (auto-sync playlists)
 - Network error handling with retries
 - Download progress tracking
 - Rate limiting to avoid IP blocking
