@@ -2,7 +2,7 @@
 # Lines starting with # are ignored
 
 # Example URLs:
-# https://music.youtube.com/playlist?list=PLXXXXXXXXXXXXXX
-# https://www.youtube.com/playlist?list=PLXXXXXXXXXXXXXX
+# NameofPlaylist|https://music.youtube.com/playlist?list=PLXXXXXXXXXXXXXX
+# NameofPlaylist|https://www.youtube.com/playlist?list=PLXXXXXXXXXXXXXX
 
 # Add your playlists below:
