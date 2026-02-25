@@ -1,30 +1,23 @@
-version: '3.8'
-
 services:
   ytm-downloader:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: ytm-downloader
-    volumes:
-      # Mount the downloads folder from host to container
-      - ./downloads:/downloads
-      # Mount the logs folder for persistent logs
-      - ./logs:/logs
-      # Optionally mount a file with playlist URLs
-      - ${PLAYLIST_FILE:-./playlists.txt}:/app/playlists.txt:ro
-      # Mount custom config file if provided
-      - ${CONFIG_FILE:-./config.yml}:/app/config.yml:ro
     environment:
       - OUTPUT_DIR=/downloads
-      - MP3_QUALITY=${MP3_QUALITY:-320k}
+      - MP3_QUALITY=${MP3_QUALITY:-0}
       - RATE_LIMIT=${RATE_LIMIT:-0}
       - MAX_RETRIES=${MAX_RETRIES:-3}
       - VERBOSE=${VERBOSE:-0}
       - LOG_FILE=${LOG_FILE:-/logs/ytm-downloader.log}
-    # Override the default command to use playlists.txt file
-    command: -f /app/playlists.txt -o /downloads ${EXTRA_ARGS}
-    # Ensure container stops gracefully
+      - ARCHIVE_FILE=/downloads/download-archive.txt
+      - WATCHDOG_INTERVAL=${WATCHDOG_INTERVAL:-600}
+    volumes:
+      - ./downloads:/downloads
+      - ./logs:/logs
+      - ./playlists.txt:/app/playlists.txt:ro
+      - ./download-archive.txt:/downloads/download-archive.txt
+    command: ["--watch","--interval","${WATCHDOG_INTERVAL:-600}","-f","/app/playlists.txt","-o","/downloads","--archive-file","/downloads/download-archive.txt","--log-file","/logs/ytm-downloader.log"]
     stop_signal: SIGINT
-    # Restart policy
-    restart: "no"
+    restart: unless-stopped
