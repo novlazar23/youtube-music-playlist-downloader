@@ -1,205 +1,83 @@
 # YouTube Music Playlist Downloader
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue)](https://www.docker.com/)
-[![.github/workflows/docker-build.yml](https://github.com/A909M/youtube-music-playlist-downloader/actions/workflows/docker-build.yml/badge.svg)](https://github.com/A909M/youtube-music-playlist-downloader/actions/workflows/docker-build.yml)
-
-A Docker-based tool to download playlists from YouTube Music and convert them to MP3 format.
+A Docker-based tool to download playlists from YouTube Music and convert them to MP3 format. Optimized for stable library organization in Navidrome.
 
 ## Features
 
-- Download entire playlists from YouTube Music
-- Convert audio to MP3 (FFmpeg)
-- Consistent metadata tagging (Navidrome-friendly)
-- Embed thumbnails as cover artwork
-- Organize downloads by playlist/album
-- Skip duplicates using yt-dlp archive
-- Support for multiple playlists
-- Watchdog mode (auto-sync playlists)
-- Network error handling with retries
-- Download progress tracking
-- Rate limiting to avoid IP blocking
-- Comprehensive logging
+- Download playlists (including YouTube Music links; redirects to YouTube playlist)
+- Convert audio to MP3 via FFmpeg
+- Consistent Navidrome tags (hard-enforced on the final MP3):
+  - Album = playlist name (from `playlists.txt` if provided)
+  - Album Artist = playlist/artist name (from `playlists.txt` if provided)
+  - Track number = playlist index (if available)
+- Embed cover artwork (thumbnail)
+- Skip duplicates across runs using a persistent download archive file
+- Watchdog mode: periodically re-check playlists and download new items
+- JS challenge support for YouTube via Deno + EJS remote components
+- Logging to console and optional file
 
 ## Prerequisites
 
-- [Docker](https://www.docker.com/get-started)
-- [Docker Compose](https://docs.docker.com/compose/install/) (optional, but recommended)
+- Docker + Docker Compose
 
-## Quick Start
+## playlists.txt format (important)
 
-1. Clone this repository or download the files
-2. Run the setup script to create necessary directories:
+One entry per line. Supported formats:
 
-   ```bash
-   # On Linux/Mac
-   chmod +x setup.sh
-   ./setup.sh
+1) `Album|Artist|URL` (preferred)
+2) `Album|URL`
+3) `URL` (fallback: album/title + uploader via yt-dlp extraction)
 
-   # On Windows
-   .\setup.ps1
-   ```
+Examples:
 
-3. Edit the `playlists.txt` file to add your YouTube Music playlist URLs (one per line)
-4. Run the container using Docker Compose:
-   ```bash
-   docker-compose up
-   ```
-
-The downloaded MP3 files will be available in the `./downloads` directory, and logs in the `./logs` directory.
-
-## Usage Options
-
-### Using Docker Compose (recommended)
-
-1. Edit the `playlists.txt` file with your playlist URLs
-2. Run the container:
-
-```bash
-docker-compose up
+```text
+Remixe|Mix|https://music.youtube.com/playlist?list=PLxxxxxxxxxxxxxxxx
+Hardstyle|DJ Set|https://music.youtube.com/watch?v=xxxxxxxxxxx&list=RDxxxxxxxxxxxx
+# fallback example (auto title/uploader):
+https://music.youtube.com/playlist?list=PLyyyyyyyyyyyyyyyy
 ```
 
-To customize the MP3 quality:
+## Quick Start (Docker Compose)
 
 ```bash
-MP3_QUALITY=192k docker-compose up
+mkdir -p downloads logs
+touch playlists.txt download-archive.txt
+docker compose up -d --build
 ```
 
-To enable rate limiting and add verbosity:
+Downloads go to `./downloads`, logs to `./logs`. The dedupe archive is `./download-archive.txt`.
+
+## Watchdog mode
+
+Runs periodically (default 600s):
 
 ```bash
-RATE_LIMIT=1 VERBOSE=1 docker-compose up
+docker compose up -d
 ```
 
-To specify additional arguments:
+## Dedupe archive (persistent)
 
-```bash
-EXTRA_ARGS="--retries 5" docker-compose up
-```
-
-### Configuration File
-
-The application also supports a YAML configuration file. By default, it looks for `config.yml` in the application directory.
-
-Example configuration:
+The archive file is appended after a successful download + conversion. Ensure it is mounted/persisted:
 
 ```yaml
-# Output directory for downloaded files
-output_dir: /downloads
-
-# MP3 audio quality (e.g., 128k, 192k, 320k)
-quality: 320k
-
-# Enable rate limiting to avoid IP blocking (0=disabled, 1=enabled)
-rate_limit: 0
-
-# Maximum number of retries for failed downloads
-max_retries: 3
-
-# Log file path (leave empty for console-only logging)
-log_file: /logs/ytm-downloader.log
-
-# Verbose logging (0=normal, 1=verbose)
-verbose: 0
+- ./download-archive.txt:/downloads/download-archive.txt
 ```
 
-To use a custom configuration file:
+## Maintenance helper
+
+Includes `/app/maintenance.py`:
+- `--set-album-artist` : set Album and Album Artist to folder name
+- `--clean-empty` : remove empty ID3 frames
+- `--replaygain` : compute ReplayGain (uses `mp3gain` inside the container)
+
+Examples:
 
 ```bash
-CONFIG_FILE=./my-custom-config.yml docker-compose up
+docker exec -it ytm-downloader python /app/maintenance.py /downloads/Remixe --set-album-artist
+docker exec -it ytm-downloader python /app/maintenance.py /downloads/Remixe --clean-empty
+docker exec -it ytm-downloader python /app/maintenance.py /downloads/Remixe --replaygain
 ```
-
-### Using Docker directly
-
-```bash
-# Build the Docker image
-docker build -t ytm-downloader .
-
-# Download a single playlist
-docker run -v "$(pwd)/downloads:/downloads" ytm-downloader "https://music.youtube.com/playlist?list=PLXXXXX"
-
-# Download multiple playlists
-docker run -v "$(pwd)/downloads:/downloads" ytm-downloader "https://music.youtube.com/playlist?list=PLXXXX" "https://music.youtube.com/playlist?list=PLyyyy"
-
-# Download playlists from a file
-docker run -v "$(pwd)/downloads:/downloads" -v "$(pwd)/playlists.txt:/app/playlists.txt:ro" ytm-downloader -f /app/playlists.txt
-```
-
-### Command-line Options
-
-```bash
-Usage: python main.py [OPTIONS] [URLS...]
-
-Options:
-  -o, --output-dir DIR     Directory to save downloaded files (default: ./downloads)
-  -q, --quality QUALITY    MP3 audio quality (default: 320k)
-  -f, --file FILE          Text file with playlist URLs (one per line)
-  -r, --rate-limit         Enable rate limiting to avoid IP blocking
-  --retries NUM            Number of retries for failed downloads (default: 3)
-  --log-file FILE          Save logs to a file in addition to console output
-  -v, --verbose            Enable verbose logging
-  --help                   Show this help message
-```
-
-## Docker Image Details
-
-The Docker image follows best practices:
-
-- Uses multi-stage builds to reduce image size
-- Runs as a non-root user for security
-- Includes only necessary dependencies
-- Uses specific version tags for reproducibility
-- Properly handles signals for graceful shutdown
 
 ## License
 
 MIT
-
-## Acknowledgements
-
-This tool uses:
-
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) for downloading videos
-- [FFmpeg](https://ffmpeg.org/) for audio conversion
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to contribute to this project.
-
-## GitHub Integration
-
-This project is hosted on GitHub and includes CI/CD through GitHub Actions:
-
-1. **Fork the Repository**: Fork this repository to your GitHub account
-2. **Clone**: `git clone https://github.com/yourusername/youtube-music-downloader.git`
-3. **Install Dependencies**: Run the setup script to prepare your environment
-4. **Make Changes**: Implement your feature or fix
-5. **Create a Pull Request**: Submit your changes for review
-
-### GitHub Actions
-
-The repository includes a GitHub Actions workflow that:
-
-- Builds the Docker image
-- Runs linting with flake8
-- Tests the Docker container functionality
-- Verifies directory structure
-
-## Built With
-
-This project was developed with the assistance of GitHub Copilot, an AI pair programming tool that helps generate code and provide suggestions during development.
-
-## Recommended Playlists
-
-Want to try out the tool? Here are some curated playlists you can download:
-
-| Playlist Name | Description | URL |
-|--------------|-------------|-----|
-| Lo-Fi Beats | Perfect background music for coding or studying | https://music.youtube.com/playlist?list=PLQ176FUIyIUaNcDQJjIFL0wp8GW2EA9Xh |
-| Instrumental Focus | Distraction-free music to boost productivity | https://music.youtube.com/playlist?list=PLQ176FUIyIUZe607HAWNNq1z33XAOfge8 |
-| Ambient Soundscapes | Calm atmospheric music for relaxation | https://music.youtube.com/playlist?list=PLQ176FUIyIUa1dA8101V-V7iesN8CgqfY |
-| Coding Mix | Energetic beats to keep you in the flow | https://music.youtube.com/playlist?list=PLQ176FUIyIUYbrYf6v9y6F9wturNQf1Bf |
-
-Simply copy any of these URLs to your `playlists.txt` file and run the tool to download them.
-
-> **Note**: These are public playlists available on YouTube Music. Please respect copyright laws when downloading music.

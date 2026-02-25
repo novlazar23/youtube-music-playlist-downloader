@@ -1,8 +1,9 @@
-# YouTube Music Playlists - Add your playlist URLs below (one per line)
-# Lines starting with # are ignored
+# Supported formats:
+#   Album|Artist|URL
+#   Album|URL
+#   URL
 
-# Example URLs:
-# NameofPlaylist|https://music.youtube.com/playlist?list=PLXXXXXXXXXXXXXX
-# NameofPlaylist|https://www.youtube.com/playlist?list=PLXXXXXXXXXXXXXX
-
-# Add your playlists below:
+Remixe|Mix|https://music.youtube.com/playlist?list=PLxxxxxxxxxxxxxxxx
+Hardstyle|DJ Set|https://music.youtube.com/watch?v=xxxxxxxxxxx&list=RDxxxxxxxxxxxx
+# Fallback example (auto title/uploader):
+https://music.youtube.com/playlist?list=PLyyyyyyyyyyyyyyyy
