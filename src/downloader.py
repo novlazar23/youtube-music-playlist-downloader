@@ -7,8 +7,8 @@ from typing import List, Optional, Dict, Any, Callable, Tuple
 
 import yt_dlp
 
-
-PlaylistEntry = Tuple[str, str]  # (album_name, url)
+# (album, album_artist, url)
+PlaylistEntry = Tuple[str, str, str]
 
 
 class YoutubePlaylistDownloader:
@@ -32,21 +32,18 @@ class YoutubePlaylistDownloader:
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-        # Download archive (dedupe)
         self.archive_file = archive_file or os.path.join(
             self.output_dir, ".yt-dlp-download-archive.txt"
         )
-
         self.logger.info(f"Using archive file: {self.archive_file}")
 
-    def _get_ydl_opts(
-        self,
-        forced_album: str,
-        playlist_owner: str = "",
-    ) -> dict:
+    def _get_ydl_opts(self, album: str, album_artist: str) -> dict:
+        safe_album = (album or "").replace("/", "_").replace("\\", "_").strip() or "Unknown_Playlist"
+        safe_album_artist = (album_artist or "").strip()
+
         outtmpl = os.path.join(
             self.output_dir,
-            forced_album,
+            safe_album,
             "%(playlist_index)s - %(title)s.%(ext)s",
         )
 
@@ -58,59 +55,43 @@ class YoutubePlaylistDownloader:
                         f"{d.get('_percent_str', '')} (ETA: {d.get('_eta_str', '')})"
                     )
             elif d.get("status") == "finished":
-                self.logger.info(
-                    f"Downloaded: {d.get('filename', '')} - Converting to MP3..."
-                )
+                self.logger.info(f"Downloaded: {d.get('filename', '')} - Converting to MP3...")
             elif d.get("status") == "error":
                 self.logger.error(f"Error downloading: {d.get('filename', '')}")
 
-        # Force consistent tags for Navidrome (no genre chips)
-        parse_metadata = [
-            f"album:{forced_album}",
-            "track_number:%(playlist_index)s",
+        # Hard-enforce tags on final MP3 (Navidrome-friendly)
+        ffmpeg_out_metadata = [
+            "-metadata", f"album={safe_album}",
         ]
-        if playlist_owner:
-            parse_metadata.append(f"album_artist:{playlist_owner}")
-        else:
-            parse_metadata.append("album_artist:%(playlist_uploader)s")
+        if safe_album_artist:
+            ffmpeg_out_metadata += ["-metadata", f"album_artist={safe_album_artist}"]
+        ffmpeg_out_metadata += ["-metadata", "track=%(playlist_index)s"]
 
         return {
             "format": "bestaudio/best",
             "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": self.quality,  # "0" best VBR, "320" for CBR 320
-                },
-                {
-                    "key": "FFmpegMetadata",
-                    "add_metadata": True,
-                },
-                {
-                    "key": "EmbedThumbnail",
-                },
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": self.quality},
+                {"key": "FFmpegMetadata", "add_metadata": True},
+                {"key": "EmbedThumbnail"},
             ],
+            # Critical: args routed to ExtractAudio ffmpeg OUTPUT position (case-sensitive key)
+            "postprocessor_args": {
+                "ExtractAudio+ffmpeg_o": ffmpeg_out_metadata
+            },
             "outtmpl": outtmpl,
-            "parse_metadata": parse_metadata,
             "ignoreerrors": True,
             "geo_bypass": True,
             "writethumbnail": True,
             "logger": self.logger,
             "progress_hooks": [progress_hook],
             "noprogress": False,
-
             "socket_timeout": 30,
             "retries": 10,
             "fragment_retries": 10,
             "skip_unavailable_fragments": True,
-
             "overwrites": False,
             "continuedl": True,
-
-            # Dedupe
             "download_archive": self.archive_file,
-
-            # EJS / JS challenge solving for YouTube
             "js_runtimes": {"deno": {}},
             "remote_components": {"ejs:github"},
         }
@@ -122,13 +103,8 @@ class YoutubePlaylistDownloader:
                 return func(*args, **kwargs)
             except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError) as e:
                 error_str = str(e).lower()
-                if any(
-                    err in error_str
-                    for err in ["timeout", "connection", "network", "reset", "socket", "ssl"]
-                ):
-                    self.logger.warning(
-                        f"Network error (attempt {attempt+1}/{self.max_retries}): {e}"
-                    )
+                if any(err in error_str for err in ["timeout", "connection", "network", "reset", "socket", "ssl"]):
+                    self.logger.warning(f"Network error (attempt {attempt+1}/{self.max_retries}): {e}")
                     last_error = e
                     time.sleep(self.retry_sleep * (attempt + 1))
                 else:
@@ -141,56 +117,53 @@ class YoutubePlaylistDownloader:
             self.logger.debug(f"Rate limiting: sleeping for {delay:.2f} seconds")
             time.sleep(delay)
 
-    def download_playlist(self, playlist_url: str, forced_album: str) -> None:
-        self.logger.info(f"Downloading playlist: {playlist_url} -> album '{forced_album}'")
-
-        # Extract a best-effort playlist owner for Album Artist (optional)
-        playlist_owner = ""
+    def _extract_defaults(self, url: str) -> Tuple[str, str]:
+        """Fallback to yt-dlp extraction when album/artist not provided."""
         try:
             with yt_dlp.YoutubeDL({"extract_flat": True, "quiet": True}) as ydl:
-                info = self._with_retry(ydl.extract_info, playlist_url, download=False)
-                playlist_owner = (
-                    info.get("uploader") or info.get("channel") or info.get("uploader_id") or ""
-                )
+                info = self._with_retry(ydl.extract_info, url, download=False)
+
+            title = (info.get("title") or "Unknown_Playlist").strip()
+            title = title.replace("/", "_").replace("\\", "_")
+
+            artist = (info.get("uploader") or info.get("channel") or info.get("uploader_id") or "").strip()
+            return title, artist
         except Exception as e:
-            self.logger.warning(f"Could not fetch playlist owner metadata: {e}")
+            self.logger.warning(f"Fallback metadata extraction failed for {url}: {e}")
+            return "Unknown_Playlist", ""
 
-        safe_album = forced_album.replace("/", "_").replace("\\", "_").strip()
-        if not safe_album:
-            safe_album = "Unknown_Playlist"
+    def download_playlist(self, url: str, album: str, album_artist: str) -> None:
+        # If album/artist not provided, fallback to yt-dlp extraction
+        if not album:
+            album, extracted_artist = self._extract_defaults(url)
+            if not album_artist:
+                album_artist = extracted_artist
 
+        safe_album = (album or "Unknown_Playlist").replace("/", "_").replace("\\", "_").strip() or "Unknown_Playlist"
         playlist_dir = os.path.join(self.output_dir, safe_album)
         os.makedirs(playlist_dir, exist_ok=True)
 
+        self.logger.info(f"Downloading: {url} -> Album='{safe_album}' AlbumArtist='{album_artist or ''}'")
+
         try:
-            with yt_dlp.YoutubeDL(self._get_ydl_opts(safe_album, playlist_owner)) as ydl:
-                self._with_retry(ydl.download, [playlist_url])
-
+            with yt_dlp.YoutubeDL(self._get_ydl_opts(safe_album, album_artist)) as ydl:
+                self._with_retry(ydl.download, [url])
             self.logger.info(f"Download complete → {playlist_dir}")
-
         except Exception as e:
-            self.logger.error(f"Error downloading playlist {playlist_url}: {e}")
-
+            self.logger.error(f"Error downloading {url}: {e}")
         finally:
             self._apply_rate_limit()
 
     def download_multiple_playlists(self, playlist_entries: List[PlaylistEntry]) -> None:
         total = len(playlist_entries)
-        for i, (album_name, url) in enumerate(playlist_entries, 1):
-            album_name = (album_name or "").strip()
+        for i, (album, album_artist, url) in enumerate(playlist_entries, 1):
+            album = (album or "").strip()
+            album_artist = (album_artist or "").strip()
             url = (url or "").strip()
             if not url:
                 continue
-
-            if not album_name:
-                # Fallback: derive from metadata if user didn't provide a name
-                album_name = "Unknown_Playlist"
-
-            self.logger.info(f"Processing playlist {i}/{total}: {url}")
-            try:
-                self.download_playlist(url, album_name)
-            except Exception as e:
-                self.logger.error(f"Failed playlist {url}: {e}")
+            self.logger.info(f"Processing {i}/{total}: {album or '[auto]'}|{album_artist or '[auto]'}|{url}")
+            self.download_playlist(url, album, album_artist)
 
 
 def setup_logging(verbose: bool = False, log_file: Optional[str] = None) -> None:
